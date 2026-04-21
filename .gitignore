@@ -1,0 +1,50 @@
+# Secrets — never commit these
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Data (lives in Dropbox, not the repo)
+/data/
+.local_dropbox/
+audit_report.json
+*.parquet
+*.duckdb
+*.db
+
+# Unrelated sub-projects / loose files in AI GARP/ — not part of this repo
+/contextEffectsComprehensive/
+/dashboard.html
+/archive/
+/graphs/
+/instructions/
+/mFiles/
+/pythonFiles/
+/slides/
+
+# User-local tool config (Claude Code settings, etc.)
+/.claude/
+
+# Notebooks
+.ipynb_checkpoints/
+*.nbconvert.ipynb
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
