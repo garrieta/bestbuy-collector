@@ -28,7 +28,7 @@ def build_prices_frame(products: Iterable[dict], fetched_at: datetime) -> pl.Dat
         row = {f: _normalize(p.get(f)) for f in config.PRICE_FIELDS}
         row["fetched_at"] = fetched_at
         rows.append(row)
-    df = pl.DataFrame(rows)
+    df = pl.DataFrame(rows, infer_schema_length=None)
     if "sku" in df.columns:
         df = df.with_columns(pl.col("sku").cast(pl.Utf8))
     return df

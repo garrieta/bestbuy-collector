@@ -61,7 +61,10 @@ def build_metadata_frame(
         row = {f: _normalize(p.get(f)) for f in config.METADATA_FIELDS}
         content_hash = compute_row_hash(row)
         rows.append({**row, "content_hash": content_hash, "observed_at": fetched_at})
-    df = pl.DataFrame(rows)
+    # infer_schema_length=None scans all rows; avoids type-clash errors where
+    # a sparse column (e.g. `platform`) looks Null in the first 100 rows but
+    # has real strings ("Mac") further down.
+    df = pl.DataFrame(rows, infer_schema_length=None)
     if "sku" in df.columns:
         df = df.with_columns(pl.col("sku").cast(pl.Utf8))
     return df
