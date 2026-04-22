@@ -152,6 +152,17 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:
             print(f"  (warning) daily report write failed: {e}", file=sys.stderr)
 
+        # Sync project docs so Dropbox-only collaborators see them next
+        # to the data. Tiny (~10 KB total); overwritten each run.
+        for fname in ("README.md", "DATA.md", "notes.md"):
+            try:
+                local = PROJECT_ROOT / fname
+                if local.exists():
+                    sink.upload_bytes(f"/{fname}", local.read_bytes())
+                    print(f"  doc sync       : -> /{fname}")
+            except Exception as e:
+                print(f"  (warning) {fname} sync failed: {e}", file=sys.stderr)
+
     print()
     print(f"Status   : {log.status}")
     print(f"Duration : {log.duration_seconds:.1f}s")
