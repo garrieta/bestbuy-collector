@@ -12,7 +12,8 @@ views pre-registered: `prices`, `metadata_current`, `metadata_history`.
 Typical usage:
     from bbpipeline.analysis import (
         load_prices_latest, load_prices, load_metadata_current,
-        load_metadata_at, load_panel, duckdb_connection,
+        load_metadata_at, load_panel, load_panel_historical,
+        duckdb_connection,
     )
 
     # Most recent snapshot — one row per SKU
@@ -24,11 +25,17 @@ Typical usage:
     # Current metadata (wide: name, manufacturer, categoryPath, ...)
     meta = load_metadata_current()
 
-    # Metadata as it stood at a past moment (SCD2 as-of)
-    snap = load_metadata_at("2026-04-22T00:00:00Z")
+    # Metadata as it stood at a past moment (SCD2 as-of).
+    # restrict_to_active=True intersects with today's active catalog
+    # (keeps SKU universe balanced across time).
+    snap = load_metadata_at("2026-04-22T00:00:00Z", restrict_to_active=True)
 
-    # Prices time-series joined with current metadata
+    # Prices time-series joined with CURRENT metadata (fast hash join)
     panel = load_panel(start="2026-04-21", end="2026-04-22")
+
+    # Prices joined with POINT-IN-TIME metadata (correct when metadata
+    # has drifted; uses ASOF join; slower but accurate longitudinally)
+    panel_hist = load_panel_historical(start="2026-04-21")
 
     # Or drop into SQL for anything custom:
     con = duckdb_connection()
@@ -147,24 +154,35 @@ def load_metadata_current(
 def load_metadata_at(
     as_of: str | datetime,
     skus: Sequence[str] | None = None,
+    restrict_to_active: bool = False,
     data_root: str | Path | None = None,
 ) -> pl.DataFrame:
     """SCD2 as-of query: for each SKU, the metadata row with the latest
     `observed_at <= as_of`. Returns one row per SKU.
 
-    SKUs that have never been observed on or before `as_of` are omitted."""
+    SKUs that have never been observed on or before `as_of` are omitted.
+
+    If `restrict_to_active=True`, the result is intersected with today's
+    active catalog — drops SKUs that have since gone inactive. Useful
+    when you want a balanced panel whose SKU universe is stable across
+    time. (Does not modify stored data; this is a query-time filter.)
+    """
     con = duckdb_connection(data_root)
     params: list = [as_of]
     where_sku = ""
     if skus:
         where_sku = " AND sku IN (SELECT UNNEST(?))"
         params.append(list(skus))
+    where_active = (
+        " AND sku IN (SELECT sku FROM metadata_current)"
+        if restrict_to_active else ""
+    )
     q = f"""
         WITH ranked AS (
             SELECT *, ROW_NUMBER() OVER (PARTITION BY sku
                                          ORDER BY observed_at DESC) AS _rn
             FROM metadata_history
-            WHERE observed_at <= ? {where_sku}
+            WHERE observed_at <= ? {where_sku} {where_active}
         )
         SELECT * EXCLUDE (_rn) FROM ranked WHERE _rn = 1
     """
@@ -204,6 +222,56 @@ def load_panel(
                m.digital, m.releaseDate
         FROM prices p
         LEFT JOIN metadata_current m USING (sku)
+        {where}
+        ORDER BY p.sku, p.fetched_at
+    """
+    return con.execute(q, params).pl()
+
+
+def load_panel_historical(
+    start: str | datetime | None = None,
+    end: str | datetime | None = None,
+    skus: Sequence[str] | None = None,
+    data_root: str | Path | None = None,
+) -> pl.DataFrame:
+    """Like `load_panel` but each price row is joined with the metadata
+    in effect AT that time (point-in-time / SCD2 join), not today's
+    current metadata.
+
+    Uses DuckDB's ASOF JOIN: for each (sku, fetched_at) in prices, picks
+    the `metadata_history` row with the largest `observed_at ≤ fetched_at`.
+
+    A `metadata_observed_at` column is included so you can see which
+    metadata version was used for each row. Null values mean no metadata
+    was observed for that SKU at or before the price timestamp
+    (rare — only possible at the very start of the panel).
+
+    Slower than `load_panel` (ASOF join instead of hash join); correct
+    when metadata has drifted over your window (e.g., department or
+    class changes).
+    """
+    con = duckdb_connection(data_root)
+    filters: list[str] = []
+    params: list = []
+    if start is not None:
+        filters.append("p.fetched_at >= ?")
+        params.append(start)
+    if end is not None:
+        filters.append("p.fetched_at <= ?")
+        params.append(end)
+    if skus:
+        filters.append("p.sku IN (SELECT UNNEST(?))")
+        params.append(list(skus))
+    where = ("WHERE " + " AND ".join(filters)) if filters else ""
+    q = f"""
+        SELECT p.*,
+               m.name, m.manufacturer, m.categoryPath, m.class,
+               m.subclass, m.department, m.type, m.new, m.preowned,
+               m.digital, m.releaseDate,
+               m.observed_at AS metadata_observed_at
+        FROM prices p
+        ASOF LEFT JOIN metadata_history m
+          ON p.sku = m.sku AND p.fetched_at >= m.observed_at
         {where}
         ORDER BY p.sku, p.fetched_at
     """
