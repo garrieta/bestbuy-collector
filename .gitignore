@@ -19,6 +19,7 @@ dist/
 
 # Data (lives in Dropbox, not the repo)
 /data/
+/csv/
 .local_dropbox/
 audit_report.json
 *.parquet

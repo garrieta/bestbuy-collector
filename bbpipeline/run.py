@@ -18,7 +18,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from . import config, metadata, pricing
+from . import config, metadata, monitoring, pricing
 from .bbapi import BestBuyAPI
 from .logging_utils import RunLog
 from .storage import DropboxClient
@@ -141,6 +141,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  run log        : -> {runlog_path}")
         except Exception as e:
             print(f"  (warning) run log upload failed: {e}", file=sys.stderr)
+
+        # Daily rollup: regenerate on every run so the markdown always
+        # reflects the latest run of the day. Non-fatal if it fails.
+        try:
+            report_path, report_bytes = monitoring.write_daily_report(
+                sink, log.started_at.date()
+            )
+            print(f"  daily report   : {report_bytes:>10,} B -> {report_path}")
+        except Exception as e:
+            print(f"  (warning) daily report write failed: {e}", file=sys.stderr)
 
     print()
     print(f"Status   : {log.status}")
